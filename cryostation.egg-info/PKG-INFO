@@ -1,0 +1,10 @@
+Metadata-Version: 1.0
+Name: cryostation
+Version: 0.1
+Summary: A library for communicating with a Montana Instruments Cryostation
+Home-page: https://github.com/willtalmadge/Cryostation
+Author: William Talmadge
+Author-email: willtalmadge@gmail.com
+License: MIT
+Description: UNKNOWN
+Platform: UNKNOWN
