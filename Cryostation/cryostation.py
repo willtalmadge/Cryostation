@@ -1,10 +1,4 @@
 import socket
-import rx
-import numpy
-import time
-
-
-from multiprocessing import Process, freeze_support
 
 """
 Utility functions for communicating with the Cryostation over TCP/IP.
@@ -43,6 +37,12 @@ socket before calling these functions. See the Cryostation command
 documentation for detailed descriptions of what these commands do.
 """
 
+"""
+Get commands, retrieve parameters and return them. Functions with a _b
+suffix return bundles (named tuples) that can be joined in reactive programming
+stream transformers.
+"""
+
 def get_alarm_state(cryostation_socket):
     response = query(cryostation_socket, "GAS")
     return True if response == "T" else False
@@ -54,6 +54,22 @@ def get_chamber_pressure(cryostation_socket):
 def get_user_stage_temperature_setpoint(cryostation_socket):
     response = query(cryostation_socket, "GHTSP")
     return float(response)
+    
+def get_platform_heater_power(cryostation_socket):
+    response = query(cryostation_socket, "GPHP")
+    return float(response)
+    
+def get_pid_fi(cryostation_socket):
+    response = query(cryostation_socket, "GPIDF")
+    return float(response)
+    
+def get_pid_ki(cryostation_socket):
+    response = query(cryostation_socket, "GPIDK")
+    return float(response)
+    
+def get_pid_td(cryostation_socket):
+    response = query(cryostation_socket, "GPIDT")
+    return float(response)
 
 def get_platform_temperature(cryostation_socket):
     response = query(cryostation_socket, "GPT")
@@ -63,6 +79,30 @@ def get_platform_stability(cryostation_socket):
     response = query(cryostation_socket, "GPS")
     return float(response)
 
+def get_stage_1_heater_power(cryostation_socket):
+    response = query(cryostation_socket, "GS1HP")
+    return float(response)
+    
+def get_stage_1_temperature(cryostation_socket):
+    response = query(cryostation_socket, "GS1T")
+    return float(response)
+    
+def get_stage_2_temperature(cryostation_socket):
+    response = query(cryostation_socket, "GS2T")
+    return float(response)
+    
+def get_sample_stability(cryostation_socket):
+    response = query(cryostation_socket, "GSS")
+    return float(response)
+    
+def get_sample_temperature(cryostation_socket):
+    response = query(cryostation_socket, "GST")
+    return float(response)
+    
+def get_platform_temperature_setpoint(cryostation_socket):
+    response = query(cryostation_socket, "GTSP")
+    return float(response)
+    
 def get_user_temperature(cryostation_socket):
     response = query(cryostation_socket, "GUT")
     return float(response)
@@ -70,6 +110,16 @@ def get_user_temperature(cryostation_socket):
 def get_user_stability(cryostation_socket):
     response = query(cryostation_socket, "GUS")
     return float(response)
+    
+"""
+Set commands, perform some action on the cryostat state or behavior
+"""
+
+def reset_pid_parameters(cryostation_socket):
+    query(cryostation_socket, "RPID")
+    
+def start_cooldown(cryostation_socket):
+    query(cryostation_socket, "SCD")
 
 def set_temperature_setpoint(cryostation_socket, temperature_setpoint):
     query_with_float(cryostation_socket, "STSP", temperature_setpoint)
@@ -85,70 +135,6 @@ def start_warm_up(cryostation_socket):
 
 def start_standby(cryostation_socket):
     query(cryostation_socket, "SSB")
-
-"""
-Reactive Cryostation functions
-"""
-
-def observe_periodic_value(cryostation_socket, action, sample_rate_ms = 1000):
-    """
-    Returns an observer that periodically samples a float yielding Cryostation command
-    :param cryostation_socket: TCP socket to the Cryostation. This should not be closed
-        while this observer is hot
-    :param action: an action that takes a socket to the Cryostation as an
-        argument and returns a float
-    :param sample_rate_ms: The sample rate in milliseconds, defaults to 1000ms
-    :return: rx.Observable that yields a (start time(sec), delta time(sec), value) tuple
-    """
-    def update_value(accum, n):
-        return (accum[0], time.clock() - accum[0], action(cryostation_socket))
-    return rx.Observable.timer(0, sample_rate_ms)\
-        .scan(update_value, (time.clock(), 0, action(cryostation_socket)))
-
-def observe_periodic_user_temperature(cryostation_socket, sample_rate_ms = 1000):
-    return observe_periodic_value(cryostation_socket, get_user_temperature, sample_rate_ms)
-
-def observe_periodic_platform_temperature(cryostation_socket, sample_rate_ms = 1000):
-    return observe_periodic_value(cryostation_socket, get_platform_temperature, sample_rate_ms)
-
-def observe_periodic_sliding_buffer(cryostation_socket, action, sample_rate_ms = 1000, buffer_length = 100):
-    return observe_periodic_value(cryostation_socket, action, sample_rate_ms)\
-        .buffer_with_count(buffer_length, 1)
-
-def observe_periodic_is_user_temperature_stable(cryostation_socket, set_point, window=100):
-    def is_stable(values):
-        time = [values[i][1] for i in range(window)]
-        temps = [values[i][2][0] for i in range(window)]
-        stabs = [values[i][2][1] for i in range(window)]
-        slope = numpy.polyfit(time, stabs, 1)[0]
-        stability = numpy.mean(stabs)
-        last_temp_err = abs(set_point - values[-1][2][0])
-        print("Temp, Stability (K): %f, %f" % (values[-1][2][0], stability))
-        print("Slope: %f" % (slope/stability))
-        return (last_temp_err <= stability) \
-               and (abs(slope/stability) < 5e-3) \
-               and (stability < 0.1)
-
-    def temp_and_stability(x):
-        return (get_user_temperature(cryostation_socket),
-                get_user_stability(cryostation_socket))
-    return observe_periodic_sliding_buffer(cryostation_socket,
-                                    temp_and_stability,
-                                    1000, window)\
-        .select(is_stable)
-
-def set_user_temperature_and_observe_stability(cs, set_point):
-    print("Temperature set to %f" % set_point)
-    if set_point < 40.0:
-        ts =  set_point
-        us = 3.0
-    else:
-        ts = 0.967*set_point
-        us = set_point
-    set_temperature_setpoint(cs,ts)
-    set_user_stage_setpoint(cs, us)
-    return observe_periodic_is_user_temperature_stable(cs, set_point, 30)\
-        .take_while(lambda x: not x)\
 
 def main():
     cs = open_cryostation("Cryostation-127")
